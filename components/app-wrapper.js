@@ -5,6 +5,8 @@ import nodejs from 'nodejs-mobile-react-native'
 
 import { getLicenseFlag, saveEncryptionFlag } from '../local-storage'
 import { openDb } from '../db'
+import { initSync } from '../lib/supabase-sync'
+import { checkForUpdate } from '../lib/version-check'
 
 import App from './app'
 import AppLoadingView from './common/app-loading'
@@ -64,6 +66,9 @@ export default class AppWrapper extends Component {
       shouldShowApp: true,
       shouldShowPasswordPrompt: false
     })
+    initSync()
+      .then(() => checkForUpdate())
+      .catch((e) => console.warn('Supabase init/version check failed:', e))
   }
 
   render() {

@@ -43,6 +43,7 @@ export const headerTitles = {
   NfpSettings: settingsTitles.nfpSettings.name,
   DataManagement: settingsTitles.dataManagement.name,
   Password: settingsTitles.password.name,
+  SupabaseSync: settingsTitles.supabaseSync.name,
   About: 'About',
   License: 'License',
   PrivacyPolicy: 'Privacy Policy',

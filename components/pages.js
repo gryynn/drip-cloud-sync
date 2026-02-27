@@ -61,6 +61,11 @@ export const pages = [
     parent: 'SettingsMenu',
   },
   {
+    component: 'SupabaseSync',
+    label: labels.supabaseSync.name,
+    parent: 'SettingsMenu',
+  },
+  {
     component: 'About',
     label: 'About',
     parent: 'SettingsMenu',

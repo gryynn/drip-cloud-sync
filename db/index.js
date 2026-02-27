@@ -7,6 +7,7 @@ import { restartApp } from './restart-app'
 import schemas from './schemas'
 import cycleModule from '../lib/cycle'
 import maybeSetNewCycleStart from '../lib/set-new-cycle-start'
+import { syncCycleDay } from '../lib/supabase-sync'
 
 let db
 let checkIsMensesStart
@@ -104,6 +105,12 @@ export function saveSymptom(symptom, date, val) {
       cycleDay[symptom] = val
     }
   })
+
+  try {
+    syncCycleDay(date, cycleDay)
+  } catch (e) {
+    console.warn('Sync after saveSymptom failed:', e)
+  }
 }
 
 export function updateCycleStartsForAllCycleDays() {
@@ -173,6 +180,15 @@ export function tryToImportWithDelete(cycleDays) {
     db.delete(db.objects('CycleDay'))
     cycleDays.forEach(tryToCreateCycleDayFromImport)
   })
+
+  try {
+    cycleDays.forEach((day) => {
+      const saved = getCycleDay(day.date)
+      if (saved) syncCycleDay(day.date, saved)
+    })
+  } catch (e) {
+    console.warn('Sync after import (with delete) failed:', e)
+  }
 }
 
 export function tryToImportWithoutDelete(cycleDays) {
@@ -183,6 +199,15 @@ export function tryToImportWithoutDelete(cycleDays) {
       tryToCreateCycleDayFromImport(day, i)
     })
   })
+
+  try {
+    cycleDays.forEach((day) => {
+      const saved = getCycleDay(day.date)
+      if (saved) syncCycleDay(day.date, saved)
+    })
+  } catch (e) {
+    console.warn('Sync after import (without delete) failed:', e)
+  }
 }
 
 export function requestHash(type, pw) {

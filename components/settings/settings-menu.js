@@ -10,7 +10,8 @@ const menu = [
   { ...menuItems.reminders, component: 'Reminders'},
   { ...menuItems.nfpSettings, component: 'NfpSettings'},
   { ...menuItems.dataManagement, component: 'DataManagement'},
-  { ...menuItems.password, component: 'Password'}
+  { ...menuItems.password, component: 'Password'},
+  { ...menuItems.supabaseSync, component: 'SupabaseSync'},
 ]
 
 const SettingsMenu = () => {
