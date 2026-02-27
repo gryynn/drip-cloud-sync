@@ -1,5 +1,11 @@
 import React, { Component } from 'react'
-import { Alert, AsyncStorage, StyleSheet, View } from 'react-native'
+import {
+  Alert,
+  AsyncStorage,
+  StyleSheet,
+  View,
+  ToastAndroid,
+} from 'react-native'
 import NetInfo from '@react-native-community/netinfo'
 
 import AppPage from '../../common/app-page'
@@ -32,6 +38,7 @@ export default class SupabaseSync extends Component {
     this.state = {
       url: '',
       anonKey: '',
+      configured: false,
       autoSync: true,
       lastSync: null,
       queueCount: 0,
@@ -52,6 +59,7 @@ export default class SupabaseSync extends Component {
     this.setState({
       url,
       anonKey,
+      configured: isConfigured(),
       autoSync: isAutoSyncEnabled(),
       lastSync,
       queueCount,
@@ -68,16 +76,21 @@ export default class SupabaseSync extends Component {
   }
 
   saveCredentials = async () => {
-    const { url, anonKey } = this.state
-    const trimmedUrl = url.trim()
-    const trimmedKey = anonKey.trim()
+    try {
+      const { url, anonKey } = this.state
+      const trimmedUrl = url.trim()
+      const trimmedKey = anonKey.trim()
 
-    await reconfigure(
-      trimmedUrl.length > 0 ? trimmedUrl : null,
-      trimmedKey.length > 0 ? trimmedKey : null
-    )
+      await reconfigure(
+        trimmedUrl.length > 0 ? trimmedUrl : null,
+        trimmedKey.length > 0 ? trimmedKey : null
+      )
 
-    Alert.alert(syncLabels.credentialsSaved)
+      this.setState({ configured: isConfigured() })
+      ToastAndroid.show(syncLabels.credentialsSaved, ToastAndroid.SHORT)
+    } catch (e) {
+      Alert.alert('Error saving credentials', e.message || String(e))
+    }
   }
 
   handleTestConnection = async () => {
@@ -104,7 +117,10 @@ export default class SupabaseSync extends Component {
         queueCount: await getQueueLength(),
         syncProgress: null,
       })
-      Alert.alert(syncLabels.syncSuccess, `${count || 0} ${syncLabels.daysSynced}`)
+      Alert.alert(
+        syncLabels.syncSuccess,
+        `${count || 0} ${syncLabels.daysSynced}`
+      )
     } catch (e) {
       Alert.alert(syncLabels.syncError, e.message)
     } finally {
@@ -113,35 +129,34 @@ export default class SupabaseSync extends Component {
   }
 
   handleFullResync = async () => {
-    Alert.alert(
-      syncLabels.fullResyncTitle,
-      syncLabels.fullResyncMessage,
-      [
-        { text: labels.menuItems.settings, style: 'cancel' },
-        {
-          text: syncLabels.fullResyncConfirm,
-          onPress: async () => {
-            this.setState({ isSyncing: true, syncProgress: null })
-            try {
-              const count = await syncAllCycleDays((synced, total) => {
-                this.setState({ syncProgress: `${synced} / ${total}` })
-              })
-              const now = new Date().toISOString()
-              this.setState({
-                lastSync: now,
-                queueCount: await getQueueLength(),
-                syncProgress: null,
-              })
-              Alert.alert(syncLabels.syncSuccess, `${count} ${syncLabels.daysSynced}`)
-            } catch (e) {
-              Alert.alert(syncLabels.syncError, e.message)
-            } finally {
-              this.setState({ isSyncing: false })
-            }
-          },
+    Alert.alert(syncLabels.fullResyncTitle, syncLabels.fullResyncMessage, [
+      { text: labels.menuItems.settings, style: 'cancel' },
+      {
+        text: syncLabels.fullResyncConfirm,
+        onPress: async () => {
+          this.setState({ isSyncing: true, syncProgress: null })
+          try {
+            const count = await syncAllCycleDays((synced, total) => {
+              this.setState({ syncProgress: `${synced} / ${total}` })
+            })
+            const now = new Date().toISOString()
+            this.setState({
+              lastSync: now,
+              queueCount: await getQueueLength(),
+              syncProgress: null,
+            })
+            Alert.alert(
+              syncLabels.syncSuccess,
+              `${count} ${syncLabels.daysSynced}`
+            )
+          } catch (e) {
+            Alert.alert(syncLabels.syncError, e.message)
+          } finally {
+            this.setState({ isSyncing: false })
+          }
         },
-      ]
-    )
+      },
+    ])
   }
 
   handleToggleAutoSync = async (val) => {
@@ -153,6 +168,7 @@ export default class SupabaseSync extends Component {
     const {
       url,
       anonKey,
+      configured,
       autoSync,
       lastSync,
       queueCount,
@@ -161,8 +177,6 @@ export default class SupabaseSync extends Component {
       isSyncing,
       syncProgress,
     } = this.state
-
-    const configured = isConfigured()
 
     return (
       <AppPage>
@@ -205,11 +219,7 @@ export default class SupabaseSync extends Component {
               >
                 {isTesting ? syncLabels.testing : syncLabels.testButton}
               </Button>
-              <Button
-                isCTA
-                onPress={this.handleSyncNow}
-                disabled={isSyncing}
-              >
+              <Button isCTA onPress={this.handleSyncNow} disabled={isSyncing}>
                 {isSyncing
                   ? syncProgress || syncLabels.syncing
                   : syncLabels.syncNowButton}
@@ -223,13 +233,17 @@ export default class SupabaseSync extends Component {
 
         <Segment title={syncLabels.statusTitle} last>
           <View style={styles.statusRow}>
-            <AppText style={styles.statusLabel}>{syncLabels.networkStatus}</AppText>
+            <AppText style={styles.statusLabel}>
+              {syncLabels.networkStatus}
+            </AppText>
             <AppText style={isOnline ? styles.online : styles.offline}>
               {isOnline ? syncLabels.online : syncLabels.offline}
             </AppText>
           </View>
           <View style={styles.statusRow}>
-            <AppText style={styles.statusLabel}>{syncLabels.lastSyncLabel}</AppText>
+            <AppText style={styles.statusLabel}>
+              {syncLabels.lastSyncLabel}
+            </AppText>
             <AppText>
               {lastSync
                 ? new Date(lastSync).toLocaleString()
@@ -237,11 +251,15 @@ export default class SupabaseSync extends Component {
             </AppText>
           </View>
           <View style={styles.statusRow}>
-            <AppText style={styles.statusLabel}>{syncLabels.queueLabel}</AppText>
+            <AppText style={styles.statusLabel}>
+              {syncLabels.queueLabel}
+            </AppText>
             <AppText>{queueCount}</AppText>
           </View>
           <View style={styles.statusRow}>
-            <AppText style={styles.statusLabel}>{syncLabels.configuredLabel}</AppText>
+            <AppText style={styles.statusLabel}>
+              {syncLabels.configuredLabel}
+            </AppText>
             <AppText>{configured ? syncLabels.yes : syncLabels.no}</AppText>
           </View>
         </Segment>
