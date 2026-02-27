@@ -15,6 +15,88 @@ Find more information on [our website](https://dripapp.org/).
 
 The app is built in React Native and currently developed for Android.
 
+## Drip Cloud Sync
+
+This fork adds **one-way sync** from the local Realm database to a Supabase backend. All existing features are untouched — the sync module is optional and only activates when Supabase credentials are configured in the app.
+
+### What it adds
+
+- **Per-entry sync**: every time a symptom is saved, that cycle day is upserted to `app_drip.cycle_days` on Supabase.
+- **Offline queue**: if the device is offline, changes are queued in AsyncStorage and flushed automatically when connectivity returns (max 3 retries per entry).
+- **Incremental sync**: a `modifiedDates` set tracks pending changes. The "Sync now" button only pushes what changed since the last sync. A full dump only happens on first sync or via "Full resync".
+- **Version check**: at launch, the app reads `app_drip.app_version` and shows an update alert if a newer version is available.
+- **Settings screen**: Settings > Cloud Sync lets you enter credentials, toggle auto-sync, test the connection, and monitor sync status.
+
+### Quick setup
+
+    git clone https://github.com/gryynn/drip-cloud-sync.git
+    cd drip-cloud-sync
+    nvm install v14.19.3
+    npm install
+
+### Supabase schema
+
+The Supabase project must expose an `app_drip` schema via the REST API with at least these tables:
+
+```sql
+-- Main cycle data (one row per day)
+app_drip.cycle_days (
+  date          TEXT PRIMARY KEY,
+  is_cycle_start BOOLEAN,
+  temperature   JSONB,
+  bleeding      JSONB,
+  mucus         JSONB,
+  cervix        JSONB,
+  note          JSONB,
+  desire        JSONB,
+  sex           JSONB,
+  pain          JSONB,
+  mood          JSONB,
+  synced_at     TIMESTAMPTZ DEFAULT now(),
+  app_version   TEXT
+)
+
+-- Version check (single row)
+app_drip.app_version (
+  version       TEXT,
+  release_notes TEXT,
+  download_url  TEXT
+)
+
+-- Debug logs (append-only)
+app_drip.sync_log (
+  id              BIGSERIAL PRIMARY KEY,
+  action          TEXT,
+  cycle_day_date  TEXT,
+  details         JSONB,
+  created_at      TIMESTAMPTZ DEFAULT now()
+)
+```
+
+### Configuring sync in the app
+
+1. Open the app and go to **Settings > Cloud Sync**.
+2. Enter your **Supabase URL** (e.g. `https://xxxxx.supabase.co`) and **Anon Key**.
+3. Tap **Save credentials**, then **Test connection** to verify.
+4. Toggle **Auto sync** on (enabled by default).
+5. For the initial upload, tap **Sync now** — this performs a full dump of all existing cycle days.
+
+### Building the APK
+
+A release keystore is required. To generate one (already done in this repo at `android/app/release.keystore`):
+
+    keytool -genkeypair -v -storetype PKCS12 \
+      -keystore android/app/release.keystore \
+      -alias drip-cloud-sync -keyalg RSA -keysize 2048 -validity 10000
+
+Signing properties are in `android/gradle.properties`. Then build:
+
+    npm run build-android-release
+
+The signed APK will be at `android/app/build/outputs/apk/release/app-release.apk`.
+
+---
+
 ▶ [How to contribute to the project](https://gitlab.com/bloodyhealth/drip/blob/master/CONTRIBUTING.md)
 
 ▶ [How to release a new version](https://gitlab.com/bloodyhealth/drip/blob/master/RELEASE.md)
