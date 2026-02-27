@@ -1,278 +1,265 @@
-# drip, the open-source cycle tracking app
+# drip-cloud-sync
 
-A menstrual cycle tracking app that's open-source and leaves your data on your phone. Use it to track your menstrual cycle and/or for fertility awareness!
-Find more information on [our website](https://dripapp.org/).
+A fork of [drip.](https://dripapp.org/) — the open-source menstrual cycle tracking app — with **one-way cloud sync to Supabase**.
 
-[<img src="https://dripapp.org/assets/get.png"
-     alt="Get it here"
-     height="55">](https://dripapp.org/release/8.apk)
-[<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
-     alt="Get it on F-Droid"
-     height="80">](https://f-droid.org/packages/com.drip/)
-[<img src="https://play.google.com/intl/en_us/badges/images/generic/en-play-badge.png"
-     alt="Get it on Google Play"
-     height="80">](https://play.google.com/store/apps/details?id=com.drip)
+Track your cycle on your phone. Consult your data from anywhere via Supabase.
 
-The app is built in React Native and currently developed for Android.
+## Why this fork
 
-## Drip Cloud Sync
+The original drip. app stores everything locally on-device using Realm. This is great for privacy, but makes it impossible to access your data from a computer, build dashboards, or create backups in the cloud.
 
-This fork adds **one-way sync** from the local Realm database to a Supabase backend. All existing features are untouched — the sync module is optional and only activates when Supabase credentials are configured in the app.
+This fork adds an optional, one-way sync module that pushes cycle data to a Supabase PostgreSQL backend. The local Realm database remains the source of truth — Supabase is a read-only mirror. If you never configure Supabase credentials, the app behaves exactly like the original.
 
-### What it adds
+## Features added
 
-- **Per-entry sync**: every time a symptom is saved, that cycle day is upserted to `app_drip.cycle_days` on Supabase.
-- **Offline queue**: if the device is offline, changes are queued in AsyncStorage and flushed automatically when connectivity returns (max 3 retries per entry).
-- **Incremental sync**: a `modifiedDates` set tracks pending changes. The "Sync now" button only pushes what changed since the last sync. A full dump only happens on first sync or via "Full resync".
-- **Version check**: at launch, the app reads `app_drip.app_version` and shows an update alert if a newer version is available.
-- **Settings screen**: Settings > Cloud Sync lets you enter credentials, toggle auto-sync, test the connection, and monitor sync status.
+- **Auto sync** — every time a symptom is saved, that cycle day is upserted to Supabase
+- **Offline queue** — if the device is offline, changes are queued in AsyncStorage and flushed automatically when connectivity returns (max 3 retries per entry)
+- **Incremental sync** — a `modifiedDates` set tracks pending changes; "Sync now" only pushes what changed since the last sync; a full dump only happens on first sync or via "Full resync"
+- **Version check** — at launch, the app reads `app_drip.app_version` and shows an update alert if a newer version is available
+- **Settings screen** — Settings > Cloud Sync lets you enter credentials, toggle auto-sync, test the connection, trigger manual sync, and monitor sync status
 
-### Quick setup
+## Supabase setup
 
-    git clone https://github.com/gryynn/drip-cloud-sync.git
-    cd drip-cloud-sync
-    nvm install v14.19.3
-    npm install
+### 1. Create a Supabase project
 
-### Supabase schema
+Go to [supabase.com](https://supabase.com) and create a new project (or use an existing one).
 
-The Supabase project must expose an `app_drip` schema via the REST API with at least these tables:
+### 2. Expose the `app_drip` schema
+
+In your Supabase dashboard:
+
+1. Go to **Project Settings > API > Data API Settings**
+2. Under **Exposed schemas**, add `app_drip`
+3. Click **Save**
+
+### 3. Run the migration SQL
+
+Open the **SQL Editor** in your Supabase dashboard and run this script:
 
 ```sql
--- Main cycle data (one row per day)
-app_drip.cycle_days (
-  date          TEXT PRIMARY KEY,
-  is_cycle_start BOOLEAN,
-  temperature   JSONB,
-  bleeding      JSONB,
-  mucus         JSONB,
-  cervix        JSONB,
-  note          JSONB,
-  desire        JSONB,
-  sex           JSONB,
-  pain          JSONB,
-  mood          JSONB,
-  synced_at     TIMESTAMPTZ DEFAULT now(),
-  app_version   TEXT
-)
+CREATE SCHEMA IF NOT EXISTS app_drip;
 
--- Version check (single row)
-app_drip.app_version (
-  version       TEXT,
+CREATE TABLE app_drip.cycle_days (
+  date TEXT PRIMARY KEY,
+  is_cycle_start BOOLEAN DEFAULT false,
+  temperature JSONB,
+  bleeding JSONB,
+  mucus JSONB,
+  cervix JSONB,
+  note JSONB,
+  desire JSONB,
+  sex JSONB,
+  pain JSONB,
+  mood JSONB,
+  synced_at TIMESTAMPTZ DEFAULT now(),
+  app_version TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_cycle_days_date ON app_drip.cycle_days (date DESC);
+CREATE INDEX idx_cycle_days_is_cycle_start ON app_drip.cycle_days (date) WHERE is_cycle_start = true;
+CREATE INDEX idx_cycle_days_synced_at ON app_drip.cycle_days (synced_at DESC);
+
+CREATE OR REPLACE FUNCTION app_drip.update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  NEW.synced_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER tr_cycle_days_updated_at
+  BEFORE UPDATE ON app_drip.cycle_days
+  FOR EACH ROW
+  EXECUTE FUNCTION app_drip.update_updated_at();
+
+CREATE TABLE app_drip.app_version (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  version TEXT NOT NULL,
+  download_url TEXT,
   release_notes TEXT,
-  download_url  TEXT
-)
+  released_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
 
--- Debug logs (append-only)
-app_drip.sync_log (
-  id              BIGSERIAL PRIMARY KEY,
-  action          TEXT,
-  cycle_day_date  TEXT,
-  details         JSONB,
-  created_at      TIMESTAMPTZ DEFAULT now()
-)
+INSERT INTO app_drip.app_version (version, release_notes)
+VALUES ('1.2207.10', 'Initial drip-cloud-sync release');
+
+CREATE TABLE app_drip.sync_log (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  action TEXT NOT NULL,
+  details JSONB,
+  cycle_day_date TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_sync_log_created_at ON app_drip.sync_log (created_at DESC);
+
+ALTER TABLE app_drip.cycle_days ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_drip.app_version ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_drip.sync_log ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "anon_full_access_cycle_days" ON app_drip.cycle_days
+  FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon_full_access_app_version" ON app_drip.app_version
+  FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "anon_full_access_sync_log" ON app_drip.sync_log
+  FOR ALL USING (true) WITH CHECK (true);
+
+GRANT USAGE ON SCHEMA app_drip TO anon;
+GRANT ALL ON ALL TABLES IN SCHEMA app_drip TO anon;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA app_drip TO anon;
+GRANT USAGE ON SCHEMA app_drip TO authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA app_drip TO authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA app_drip TO authenticated;
 ```
 
-### Configuring sync in the app
+### 4. Get your credentials
 
-1. Open the app and go to **Settings > Cloud Sync**.
-2. Enter your **Supabase URL** (e.g. `https://xxxxx.supabase.co`) and **Anon Key**.
-3. Tap **Save credentials**, then **Test connection** to verify.
-4. Toggle **Auto sync** on (enabled by default).
-5. For the initial upload, tap **Sync now** — this performs a full dump of all existing cycle days.
+In your Supabase dashboard, go to **Project Settings > API**. Copy:
 
-### Building the APK
+- **Project URL** (e.g. `https://xxxxx.supabase.co`)
+- **anon public** key (starts with `eyJ...`)
 
-A release keystore is required. To generate one (already done in this repo at `android/app/release.keystore`):
+## Building the Android APK
 
-    keytool -genkeypair -v -storetype PKCS12 \
-      -keystore android/app/release.keystore \
-      -alias drip-cloud-sync -keyalg RSA -keysize 2048 -validity 10000
+### Prerequisites
 
-Signing properties are in `android/gradle.properties`. Then build:
+| Tool        | Version     | Notes                                                  |
+| ----------- | ----------- | ------------------------------------------------------ |
+| JDK         | 11          | JDK 17+ is NOT compatible with Gradle 6.3              |
+| Android SDK | API 29      | via Android Studio or sdkmanager                       |
+| Android NDK | 21.x (r21e) | NDK 22+ removed `platforms/` dir, causes build failure |
+| Node.js     | 14.x        | Node 18+ breaks Metro 0.56 (OpenSSL incompatibility)   |
+| npm         | 6.x         | ships with Node 14                                     |
 
-    npm run build-android-release
+### 1. Clone and install
 
-The signed APK will be at `android/app/build/outputs/apk/release/app-release.apk`.
+```bash
+git clone https://github.com/gryynn/drip-cloud-sync.git
+cd drip-cloud-sync
+# Use Node 14 for npm install
+npm install
+```
 
----
+### 2. Configure `android/local.properties`
 
-▶ [How to contribute to the project](https://gitlab.com/bloodyhealth/drip/blob/master/CONTRIBUTING.md)
+This file is gitignored. Create it with paths to your SDK and NDK:
 
-▶ [How to release a new version](https://gitlab.com/bloodyhealth/drip/blob/master/RELEASE.md)
+```properties
+sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk
+ndk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk\\ndk\\21.4.7075529
+```
 
-## Development setup
+### 3. Generate a signing keystore
 
-### 1. Get this repository
+```bash
+keytool -genkeypair -v -storetype PKCS12 \
+  -keystore android/app/release.keystore \
+  -alias drip-cloud-sync -keyalg RSA -keysize 2048 -validity 10000
+```
 
-Clone it with SSH
+### 4. Configure signing credentials
 
-    git clone git@gitlab.com:bloodyhealth/drip.git
+Edit `android/gradle.properties` and replace the placeholder values:
 
-or clone it with HTTPS
+```properties
+RELEASE_STORE_FILE=release.keystore
+RELEASE_STORE_PASSWORD=your_password_here
+RELEASE_KEY_ALIAS=drip-cloud-sync
+RELEASE_KEY_PASSWORD=your_password_here
+```
 
-    git clone https://gitlab.com/bloodyhealth/drip.git
+### 5. Build
 
-### 2. Node & npm version
+```bash
+# Set environment
+export JAVA_HOME="/path/to/jdk-11"
+export ANDROID_HOME="/path/to/Android/Sdk"
+export PATH="$JAVA_HOME/bin:$PATH"
 
-Make sure you are running Node 14 and npm 6.14.17. It's easiest to switch Node versions using `nvm`, here's how to install NVM: https://github.com/nvm-sh/nvm#installing-and-updating. Once you have nvm you can install node 14:
+# Build release APK
+cd android && ./gradlew clean assembleRelease
+```
 
-    nvm install v14.19.3
+The `react.gradle` script automatically uses Node 14 for JS bundling (configured in `android/app/build.gradle`). If your Node 14 is at a different path, set the `NODE14` environment variable:
 
-and then run
+```bash
+export NODE14="/path/to/node14/node"
+```
 
-    cd drip
-    npm install
+### 6. Install
 
-## for Android
+The signed APK is at:
 
-### 3.1 Android Studio
+```
+android/app/build/outputs/apk/release/app-release.apk
+```
 
-Install [Android Studio](https://developer.android.com/studio/) - you'll need it to install some dependencies.
+Install via USB:
 
-### 3.2 More requirements from Android Studio
+```bash
+adb install -r android/app/build/outputs/apk/release/app-release.apk
+```
 
-Open Android Studio and click on "Open an existing Android Studio project". Navigate to the drip repository you cloned and double click the android folder. It detects, downloads and cofigures requirements that might be missing, like the NDK and CMake to build the native code part of the project. Also see the [nodejs-mobile repository](https://github.com/janeasystems/nodejs-mobile) for the necessary prerequisites for your system.
+## Configuring sync in the app
 
-### 3.3 Run the app on Android
+1. Open the app and go to **Settings > Cloud Sync**
+2. Enter your **Supabase URL** and **Anon Key**
+3. Tap **Save credentials** — a toast confirms the save
+4. Tap **Test connection** to verify connectivity
+5. Toggle **Auto sync** on (enabled by default)
+6. Tap **Sync now** — on first use, this performs a full upload of all existing cycle days
 
-Either start a [virtual device in Android Studio](https://developer.android.com/studio/run/emulator) or [set your physical device like your Android phone up](https://developer.android.com/training/basics/firstapp/running-app) to run the app.
+## Architecture
 
-i. Open a terminal and run
+### Files added
 
-    npm run android
-
-ii. To see logging output, run the following command in another tab:
-
-    npm run log
-
-iii. Run the following command and select enable hot reloading (see https://facebook.github.io/react-native/docs/debugging.html):
-
-    adb shell input keyevent 82
-
-iv. We recommend installing an [ESLint plugin in your editor](https://eslint.org/docs/user-guide/integrations#editors). There's an `.eslintrc` file in this project which will be used by the plugin to check your code for style errors and potential bugs.
-
-## for iOS
-
-### 4.1 Install Cocoapods
-
-"CocoaPods manages library dependencies for your Xcode projects"
-
-    brew install cocoapods
-
-### 4.2 Run app on iOS
-
-Minimum system requirements to run iOS app are as follows:
-
-- MacOS 10.15.7 for Mac users
-- Xcode 13 (command line tools only might be enough)
-
-i. Install XCode dependencies by running the following command from the root project directory:
-
-    cd ios && pod install && cd ..
-
-ii. To run app either open drip workspace ('drip.xcworkspace' file) with XCode and run "Build" or run the following command:
-
-    npm run ios
-
-iii. If you are building the app with XCode make sure you are running this as well:
-
-    npm start
-
-### Troubleshooting
-
-#### [MacOS] Java problems
-
-Make sure that you have Java 1.8 by running `java -version`.
-
-If you don't have Java installed, or your Java version is different, the app may not work. You can try just using Android Studio's Java by prepending it to your `$PATH` in your shell profile:
-`$ export PATH="/Applications/Android Studio.app/Contents/jre/jdk/Contents/Home/bin:${PATH}"`
-
-Now, `which java` should output `/Applications/Android Studio.app/Contents/jre/jdk/Contents/Home/bin/java`, and the correct Java version should be used.
-
-#### [MacOS] Ninja
-
-If `npm` says `CMake was unable to find a build program corresponding to "Ninja".`:
-
-    brew install ninja
-
-### [MacOS] adb not on the path
-
-If you get error messages about `adb` not being found on your path:
-
-    ln -s ~/Library/Android/sdk/platform-tools/adb /usr/local/bin/adb
-
-### Clearing project cache
-
-If you would like to clear project cache and/or re-install project libraries, you can run clear script as follows:
-
-    npm run clear
-
-Script accepts the following options:
-"none" - script will delete all caches and re-install project libraries,
-"ios" - script will delete ios-related cache
-"android" - script will delete android-related cache
-"cache" - script will purge Watchman, Metrobundler, Pachager and React caches
-"npm" - script will reinstall project libraries.
-
-For example, if you would like to clear android part of the project and re-install project libraries, you can run the following command:
-
-    npm run clear android npm
-
-## Tests
-
-### Unit tests
-
-You can run the tests with:
-
-    npm test
-
-### End to end tests
-
-1. Check what testing device is specified in [package.json](https://gitlab.com/bloodyhealth/drip/blob/master/package.json) under:
-   ```
-   {"detox":
-     {"configurations":
-       {"name": "NEXUS_DEVICE_OR_WHATEVER_SPECIFIED_DEVICE"}
-     }
-   }
-   ```
-2. Check if the current device is already installed on your machine. Go to `cd ~/Android/sdk/emulator/` or wherever you have Android installed on your machine. Here you can run `./emulator -list-avds` and compare the devices with the one you found in step 1.
-3. Open Android Studio and go to -> Tools -> AVD manager -> `+Create virtual device` and select the device checked in the previous step
-4. Use the emulator on your machine to run it without heavy Android Studio, e.g. in `~/Android/Sdk/emulator` OR chose to run the emulator within Android Studio
-   4.1 Here run: `$ ./emulator -avd NEXUS_DEVICE_OR_WHATEVER_SPECIFIED_DEVICE`
-   4.2 You might need to specify the following environment variables in your zsh or bash file according to where you have it installed. You can find exact path in Android Studio (Android Studio Preferences → Appearance and Behavior → System Settings → Android SDK). After adding environment variables, you might need to restart your terminal or source the modified bash profile (i.e. "source ~/.bash_profile").
-   `export ANDROID_HOME="/home/myname/Android/Sdk" export ANDROID_SDK_ROOT="/home/myname/Android/Sdk" export ANDROID_AVD_HOME="/home/myname/.android/avd"`
-5. For the first time you need to get the app on the phone or if you run into this error:
-   `'app-debug-androidTest.apk' could not be found`
-   --> open a new 2nd tab and run (in your drip folder): `cd android and ./gradlew assembleAndroidTest`
-   Otherwise just open a new 2nd tab to run (in your drip folder) `npm run android`
-6. Open a new 3rd tab to run `./node_modules/.bin/detox test -c android.emu.debug`
-
-Hopefully you see the magic happening clicking through the app and happy test results on your console :sun_with_face: !
-
-## Debugging
-
-In order to see logging output from the app, run `npm run log` in a separate terminal. You can output specific code you want to see, with:
-`console.log(theVariableIWantToSeeHere)`
-or just a random string to check if this piece of code is actually running:
-`console.log("HELLO")`.
-
-## NFP rules
-
-More information about how the app calculates fertility status and bleeding predictions in the [wiki on Gitlab](https://gitlab.com/bloodyhealth/drip/wikis/home).
-
-## Adding a new tracking icon
-
-1.  We use [fontello](http://fontello.com/) to create icon fonts for us. You need to upload the complete set of tracking icons (bleeding, cervical mucus, ...) including the new icon you wish to add, all in SVG.
-2.  Download webfont from fontello.
-3.  Copy both the content of `config.json` and `font.tff` into `assets/fonts`, replacing it with the current content of `config-drip-icon-font.json` and `drip-icon-font.tff`.
-4.  Now run the following command in your console:
-
-        react-native link
-
-5.  You should be able to use the icon now within drip, e.g. in Cycle Day Overview and on the chart.
-
-## Translation
-
-We are using [Weblate](https://weblate.org/) as translation software.
+| File                                         | Purpose                                                         |
+| -------------------------------------------- | --------------------------------------------------------------- |
+| `lib/supabase-sync.js`                       | Core sync service — direct REST calls to PostgREST API (no SDK) |
+| `lib/sync-queue.js`                          | Offline queue with AsyncStorage persistence and retry logic     |
+| `lib/version-check.js`                       | Reads `app_drip.app_version` at launch, shows update alert      |
+| `components/settings/supabase-sync/index.js` | Settings screen for credentials, sync controls, and status      |
+
+### Files modified
+
+| File                                   | Change                                                          |
+| -------------------------------------- | --------------------------------------------------------------- |
+| `db/index.js`                          | Hooks `syncCycleDay()` after `saveSymptom` and import functions |
+| `components/app-wrapper.js`            | Calls `initSync()` + `checkForUpdate()` at launch               |
+| `components/settings/index.js`         | Exports the SupabaseSync component                              |
+| `components/settings/settings-menu.js` | Adds Cloud Sync menu item                                       |
+| `components/pages.js`                  | Adds SupabaseSync page routing                                  |
+| `i18n/en/settings.js`                  | Labels for the sync settings screen                             |
+| `i18n/en/labels.js`                    | Header title for SupabaseSync page                              |
+| `android/app/build.gradle`             | Release signing config + Node 14 for JS bundling                |
+| `android/build.gradle`                 | Subprojects buildscript repos fix (JCenter shutdown workaround) |
+
+### How sync works
+
+1. User saves a symptom -> `saveSymptom()` in `db/index.js` writes to Realm, then calls `syncCycleDay(date, data)`
+2. `syncCycleDay` serializes the Realm object to JSON and POSTs to `POST /rest/v1/cycle_days` with `Prefer: resolution=merge-duplicates` (upsert)
+3. If offline or the request fails, the payload is added to the offline queue
+4. When connectivity returns, a NetInfo listener flushes the queue
+5. The `modifiedDates` set in AsyncStorage tracks which dates have pending changes
+6. "Sync now" reads `modifiedDates` and only syncs those days (incremental)
+7. "Full resync" dumps all Realm cycle days regardless of `modifiedDates`
+
+### Why no Supabase SDK?
+
+`@supabase/supabase-js` v2 uses modern web APIs (`URL`, `Headers`, etc.) that are not available in React Native 0.61's JavaScriptCore engine. Instead, the sync module makes direct HTTP calls to the PostgREST API using `fetch`, with `Accept-Profile: app_drip` / `Content-Profile: app_drip` headers for schema selection.
+
+## Known limitations
+
+- **React Native 0.61** — this is a 2019 codebase; upgrading RN would require significant effort due to `nodejs-mobile-react-native` and other native dependencies
+- **One-way sync only** — data flows from phone to Supabase, never the other way; Realm remains the source of truth
+- **Single user** — no authentication; the anon key grants full access to the `app_drip` schema; suitable for personal/private Supabase projects
+- **Node 14 required for building** — Metro 0.56 is incompatible with Node 18+ due to OpenSSL changes
+- **NDK 21 required** — NDK 22+ removed the `platforms/` directory which causes a build failure in the native modules
+
+## License
+
+GPL-3.0-or-later — same as the [original drip. project](https://gitlab.com/bloodyhealth/drip).
