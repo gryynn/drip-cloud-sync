@@ -31,7 +31,9 @@
   "dependencies": {
     "@ptomasroos/react-native-multi-slider": "^2.2.0",
     "@react-native-community/datetimepicker": "^3.0.9",
+    "@react-native-community/netinfo": "^12.0.1",
     "@react-native-community/push-notification-ios": "^1.8.0",
+    "@supabase/supabase-js": "^2.98.0",
     "assert": "^1.4.1",
     "csvtojson": "^2.0.8",
     "i18next": "^20.2.2",
@@ -61,8 +63,6 @@
     "realm": "^10.16.0",
     "redux": "^4.0.1",
     "redux-starter-kit": "^0.6.3",
-    "@react-native-community/netinfo": "^6.0.0",
-    "@supabase/supabase-js": "^2.39.0",
     "sympto": "2.0.0"
   },
   "devDependencies": {
