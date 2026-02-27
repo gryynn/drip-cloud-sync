@@ -78,6 +78,7 @@ import com.android.build.OutputFile
 project.ext.react = [
     entryFile: "index.js",
     enableHermes: false,  // clean and rebuild if changing
+    nodeExecutableAndArgs: [System.getenv("NODE14") ?: "C:\\Users\\marti\\.node14\\node-v14.21.3-win-x64\\node.exe"],
 ]
 
 apply from: "../../node_modules/react-native/react.gradle"
