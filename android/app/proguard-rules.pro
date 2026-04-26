@@ -9,9 +9,13 @@
 
 # Add any project specific keep options here:
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Realm
+-keep class io.realm.** { *; }
+-dontwarn io.realm.**
+
+# React Native
+-keep class com.facebook.react.** { *; }
+-keep class com.facebook.soloader.** { *; }
+
+# nodejs-mobile
+-keep class com.janeasystems.** { *; }

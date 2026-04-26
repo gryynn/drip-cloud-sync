@@ -78,3 +78,6 @@ android/app/src/main/assets/*
 nodejs-assets/nodejs-project/sample-*
 nodejs-assets/build-native-modules-MacOS-helper-script-node.sh
 nodejs-assets/build-native-modules-MacOS-helper-script-npm.sh
+
+# Claude Code local state
+.claude/
